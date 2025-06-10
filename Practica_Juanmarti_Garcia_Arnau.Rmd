@@ -1,0 +1,408 @@
+---
+title: "M2.959 - Visualització de dades - Pràctica - 
+Arnau Juanmartí García"
+output:
+  html_document:
+    toc: true
+    keep_md: true
+date: ""
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+options(repos = c(CRAN = "https://cran.rstudio.com/"))
+
+packages <- c("dplyr", "tidyr")
+
+for (pkg in packages) {
+  if (!require(pkg, character.only = TRUE)) {
+    install.packages(pkg)
+  }
+}
+```
+
+### 1. Carreguem els datasets
+
+```{r}
+DF_Resultats_Enquesta <- read.csv2("Microdades_anonimitzades_1119.csv", fileEncoding = "latin1")
+
+DF_Renda_Familiar <- read.csv2("reda_familiar.csv", fileEncoding = "UTF-8")
+
+DF_Resultats_Electorals <- read.csv2("epc_2024.csv", fileEncoding = "UTF-8")
+
+DF_Poblacio_Origen <- read.csv2("poblacio_origen_comarques.csv", fileEncoding = "UTF-8")
+```
+
+### 2. Neteja dels datasets
+
+#### 2.1. Neteja del dataset "DF_Resultats_Electorals"
+
+```{r}
+# Mantenim el nivell municipal i eliminem les comarques en blanc (no residents)
+library(dplyr)
+
+DF_Resultats_Electorals <- DF_Resultats_Electorals %>%
+  filter(Nivell == "MU")
+
+DF_Resultats_Electorals <- DF_Resultats_Electorals %>%
+  filter(Nom.comarca != "")
+```
+
+```{r}
+DF_Resultats_Electorals_Net <- DF_Resultats_Electorals %>%
+  group_by(Nom.comarca) %>%
+  summarise(
+    Total_Votants = sum(Votants, na.rm = TRUE),
+    Total_Vots_Aliança = sum(Vots.ALIANÇA.CAT, na.rm = TRUE),
+    Total_Vots_VOX = sum(Vots.VOX, na.rm = TRUE)
+  ) %>%
+  mutate(
+    Percentatge_Vots_Aliança = 100 * Total_Vots_Aliança / Total_Votants,
+    Percentatge_Vots_VOX = 100 * Total_Vots_VOX / Total_Votants
+  )
+```
+
+#### 2.2. Neteja del dataset "DF_Renda_Familiar"
+
+```{r}
+
+DF_Renda_Familiar <- DF_Renda_Familiar %>%
+  filter(
+    any == 2022,
+    grepl("per habitant \\(€\\)", indicador),
+    comarca.o.Aran != "Catalunya"
+  )
+```
+
+```{r}
+DF_Renda_Familiar <- DF_Renda_Familiar %>%
+  mutate(Nivell_Renda = case_when(
+    valor < 16000 ~ "Menys de 16.000€",
+    valor >= 16000 & valor <= 18000 ~ "Entre 16.000 i 18.000€",
+    valor > 18000 ~ "Més de 18.000€"
+  ))
+```
+
+```{r}
+# Observem que el Lluçanes no apareix en les dades (fins al 2023 era part del Bages i Osona)
+setdiff(DF_Resultats_Electorals_Net$Nom.comarca, DF_Renda_Familiar$comarca.o.Aran)
+```
+
+#### 2.3. Neteja del dataset "DF_Poblacio_Origen"
+
+Per motius pràctics i de format del dataset s'han eliminat les files prèviament amb una altra aplicació.
+
+```{r}
+DF_Poblacio_Origen <- DF_Poblacio_Origen %>%
+  mutate(Percentatge_No_Europeus = 
+           (`Àfrica` + `Amèrica.del.Nord.i.Central` + `Amèrica.del.Sud` + `Àsia.i.Oceania`) / Total)
+```
+
+```{r}
+DF_Poblacio_Origen <- DF_Poblacio_Origen %>%
+  mutate(Nivell_No_Europeus = case_when(
+    Percentatge_No_Europeus < 0.08 ~ "Menys del 8%",
+    Percentatge_No_Europeus >= 0.08 & Percentatge_No_Europeus <= 0.12 ~ "Entre el 8% i el 12%",
+    Percentatge_No_Europeus > 0.12 ~ "Més del 12%"
+  ))
+
+```
+
+#### 2.4. Neteja del dataset "DF_Resultats_Enquesta"
+
+```{r}
+DF_Resultats_Enquesta_Net <- DF_Resultats_Enquesta %>%
+  select(
+    COMARCA,
+    LLENGUA_ENQUESTA,
+    GENERE,
+    EDAT,
+    EDAT_GR,
+    LLOC_NAIX,
+    PROBLEMES_R_1,
+    PROBLEMES_R_2,
+    PROBLEMES_R_3,
+    INT_PARLAMENT_VOT,
+    REC_PARLAMENT_VOT,
+    VAL_CORDO_SANITARI
+  )
+```
+
+```{r}
+# Eliminem les files en que no s'arriba a esmentar el primer problema i els que no tenen genere "home" ni "dona"
+DF_Resultats_Enquesta_Net <- DF_Resultats_Enquesta_Net %>%
+  filter(PROBLEMES_R_1 != "")
+
+DF_Resultats_Enquesta_Net <- DF_Resultats_Enquesta_Net %>%
+  filter(GENERE %in% c("Home", "Dona"))
+```
+
+```{r}
+# Creem una nova columna que recull si per l'enquestat la immigració es troba entre els tres principals problemes
+DF_Resultats_Enquesta_Net <- DF_Resultats_Enquesta_Net %>%
+  mutate(IMMIG_PROBLEMA = if_else(
+    PROBLEMES_R_1 == "Immigració" |
+    PROBLEMES_R_2 == "Immigració" |
+    PROBLEMES_R_3 == "Immigració",
+    1, 0
+  ))
+# Creem tres noves columnes que recullen si vota aliança o vox
+DF_Resultats_Enquesta_Net <- DF_Resultats_Enquesta_Net %>%
+  mutate(VOT_ALIANÇA = if_else(
+    INT_PARLAMENT_VOT == "Aliança Catalana",
+    1, 0
+  ))
+
+DF_Resultats_Enquesta_Net <- DF_Resultats_Enquesta_Net %>%
+  mutate(VOT_VOX = if_else(
+    INT_PARLAMENT_VOT == "VOX",
+    1, 0
+  ))
+
+DF_Resultats_Enquesta_Net <- DF_Resultats_Enquesta_Net %>%
+  mutate(VOT_ALIANÇA_VOX = if_else(
+    INT_PARLAMENT_VOT == "Aliança Catalana" |
+    INT_PARLAMENT_VOT == "VOX",
+    1, 0
+  ))
+```
+
+```{r}
+DF_Resultats_Enquesta_Net <- DF_Resultats_Enquesta_Net %>%
+  mutate(
+    REC_PARLAMENT_VOT = ifelse(is.na(REC_PARLAMENT_VOT) | trimws(REC_PARLAMENT_VOT) == "", "No ho sap", REC_PARLAMENT_VOT),
+    INT_PARLAMENT_VOT = ifelse(is.na(INT_PARLAMENT_VOT) | trimws(INT_PARLAMENT_VOT) == "", "No ho sap", INT_PARLAMENT_VOT)
+  )
+
+DF_Resultats_Enquesta_Net <- DF_Resultats_Enquesta_Net %>%
+  filter(
+    REC_PARLAMENT_VOT != "No ho sap"
+  )
+```
+
+```{r}
+# Observem que només hi ha enquestats de 29 comarques (de les 43 existents)
+n_distinct(DF_Resultats_Enquesta_Net$COMARCA)
+```
+
+### 3. Exportem els datasets nets
+
+```{r}
+write.csv2(DF_Poblacio_Origen, "DF_Poblacio_Origen.csv", row.names = FALSE)
+write.csv2(DF_Resultats_Enquesta_Net, "DF_Resultats_Enquesta_Net.csv", row.names = FALSE)
+write.csv2(DF_Resultats_Electorals_Net, "DF_Resultats_Electorals_Net.csv", row.names = FALSE)
+write.csv2(DF_Renda_Familiar, "DF_Renda_Familiar.csv", row.names = FALSE)
+```
+
+### 4. Taula amb les comarques
+
+```{r}
+# Creem la taula de referència de comarques úniques
+DF_Taula_Comarques <- DF_Resultats_Electorals_Net %>%
+  select(Nom.comarca) %>%
+  distinct() %>%
+  arrange(Nom.comarca) %>%
+  rename(COMARCA = Nom.comarca)
+
+# Guardar com a CSV
+write.csv2(DF_Taula_Comarques, "DF_Taula_Comarques.csv", row.names = FALSE)
+```
+
+### 5. Unim les taules i generem gràfics
+
+#### 5.1. Gràfic 1: Hi ha relació entre la presència d’immigració a la comarca i la percepció que aquesta és un problema?
+
+```{r}
+DF_Analisi_1 <- DF_Resultats_Enquesta_Net %>%
+  left_join(DF_Poblacio_Origen %>% select(Comarca, Nivell_No_Europeus),
+            by = c("COMARCA" = "Comarca"))
+```
+
+```{r}
+df_genere <- DF_Analisi_1 %>%
+  group_by(Nivell_No_Europeus, GENERE) %>%
+  summarise(
+    Total = n(),
+    Problema = sum(IMMIG_PROBLEMA == 1),
+    Percentatge_Problema = round(100 * Problema / Total, 1),
+    .groups = "drop"
+  )
+
+df_total <- DF_Analisi_1 %>%
+  group_by(Nivell_No_Europeus) %>%
+  summarise(
+    Total = n(),
+    Problema = sum(IMMIG_PROBLEMA == 1),
+    Percentatge_Problema = round(100 * Problema / Total, 1),
+    .groups = "drop"
+  ) %>%
+  mutate(GENERE = "Total") %>%
+  select(Nivell_No_Europeus, GENERE, Total, Problema, Percentatge_Problema)
+
+DF_Flourish_1 <- bind_rows(df_genere, df_total) %>%
+  arrange(Nivell_No_Europeus, GENERE)
+```
+
+```{r}
+write.csv2(DF_Flourish_1.1, file = "DF_Flourish_1.1.csv", row.names = FALSE)
+```
+
+```{r}
+df_genere_edat <- DF_Analisi_1 %>%
+  group_by(Nivell_No_Europeus, GENERE, EDAT_GR) %>%
+  summarise(
+    Total = n(),
+    Problema = sum(IMMIG_PROBLEMA == 1),
+    Percentatge_Problema = round(100 * Problema / Total, 1),
+    .groups = "drop"
+  )
+
+df_total <- DF_Analisi_1 %>%
+  group_by(Nivell_No_Europeus, EDAT_GR) %>%
+  summarise(
+    Total = n(),
+    Problema = sum(IMMIG_PROBLEMA == 1),
+    Percentatge_Problema = round(100 * Problema / Total, 1),
+    .groups = "drop"
+  ) %>%
+  mutate(GENERE = "Total") %>%
+  select(Nivell_No_Europeus, GENERE, EDAT_GR, Total, Problema, Percentatge_Problema)
+
+DF_Flourish_1.2 <- bind_rows(df_genere_edat, df_total) %>%
+  arrange(Nivell_No_Europeus, EDAT_GR, GENERE)
+```
+
+```{r}
+write.csv2(DF_Flourish_1.2, file = "DF_Flourish_1.2.csv", row.names = FALSE)
+```
+
+#### 5.2. Gràfic 2: Hi ha diferències significatives en les actituds envers l’extrema dreta en funció del nivell de renda? - Problema
+
+```{r}
+DF_Analisi_2 <- DF_Resultats_Enquesta_Net %>%
+  left_join(DF_Renda_Familiar %>% select(comarca.o.Aran, Nivell_Renda), 
+            by = c("COMARCA" = "comarca.o.Aran"))
+```
+
+```{r}
+df_genere_edat_renda <- DF_Analisi_2 %>%
+  group_by(Nivell_Renda, GENERE, EDAT_GR) %>%
+  summarise(
+    Total = n(),
+    Problema = sum(IMMIG_PROBLEMA == 1, na.rm = TRUE),
+    Percentatge_Problema = round(100 * Problema / Total, 1),
+    .groups = "drop"
+  )
+
+df_total_renda <- DF_Analisi_2 %>%
+  group_by(Nivell_Renda, EDAT_GR) %>%
+  summarise(
+    Total = n(),
+    Problema = sum(IMMIG_PROBLEMA == 1, na.rm = TRUE),
+    Percentatge_Problema = round(100 * Problema / Total, 1),
+    .groups = "drop"
+  ) %>%
+  mutate(GENERE = "Total") %>%
+  select(Nivell_Renda, GENERE, EDAT_GR, Total, Problema, Percentatge_Problema)
+
+DF_Flourish_2 <- bind_rows(df_genere_edat_renda, df_total_renda) %>%
+  arrange(Nivell_Renda, EDAT_GR, GENERE)
+```
+
+```{r}
+write.csv2(DF_Flourish_2, file = "DF_Flourish_2.csv", row.names = FALSE)
+```
+
+```{r}
+df_genere_renda <- DF_Analisi_2 %>%
+  group_by(Nivell_Renda, GENERE) %>%
+  summarise(
+    Total = n(),
+    Problema = sum(IMMIG_PROBLEMA == 1, na.rm = TRUE),
+    Percentatge_Problema = round(100 * Problema / Total, 1),
+    .groups = "drop"
+  )
+
+df_total_renda <- DF_Analisi_2 %>%
+  group_by(Nivell_Renda) %>%
+  summarise(
+    Total = n(),
+    Problema = sum(IMMIG_PROBLEMA == 1, na.rm = TRUE),
+    Percentatge_Problema = round(100 * Problema / Total, 1),
+    .groups = "drop"
+  ) %>%
+  mutate(GENERE = "Total") %>%
+  select(Nivell_Renda, GENERE, Total, Problema, Percentatge_Problema)
+
+DF_Flourish_2.2 <- bind_rows(df_genere_renda, df_total_renda) %>%
+  arrange(Nivell_Renda, GENERE)
+```
+
+```{r}
+write.csv2(DF_Flourish_2.2, file = "DF_Flourish_2.2.csv", row.names = FALSE)
+```
+
+#### 5.2. Gràfic 3: Hi ha diferències significatives en les actituds envers l’extrema dreta en funció del nivell de renda? - Intenció de vot
+
+```{r}
+DF_Flourish_3 <- DF_Analisi_2 %>%
+  group_by(Nivell_Renda) %>%
+  summarise(
+    Total = n(),
+    Vot_Extrema_Dreta = sum(VOT_ALIANÇA_VOX == 1, na.rm = TRUE),
+    Percentatge_Extrema_Dreta = round(100 * Vot_Extrema_Dreta / Total, 1),
+    .groups = "drop"
+  )
+```
+
+```{r}
+write.csv2(DF_Flourish_3, file = "DF_Flourish_3.csv", row.names = FALSE)
+```
+
+### 5.3. Gràfic 4 Quina és la transferència de vot entre els partits amb representació al Parlament de Catalunya? 
+
+```{r}
+DF_Flourish_4 <- DF_Resultats_Enquesta_Net %>%
+  filter(!is.na(REC_PARLAMENT_VOT), !is.na(INT_PARLAMENT_VOT)) %>%
+  group_by(REC_PARLAMENT_VOT, INT_PARLAMENT_VOT) %>%
+  summarise(Transferències = n(), .groups = "drop") %>%
+  filter(Transferències >= 5) %>%
+  arrange(desc(Transferències))
+```
+
+```{r}
+write.csv2(DF_Flourish_4, file = "DF_Flourish_4.csv", row.names = FALSE)
+```
+
+### 5.4. Gràfic 5 D'on provenen els vots als partits d'extrema dreta? (Vox i Aliança Catalana)
+
+```{r}
+df_summary <- DF_Resultats_Enquesta_Net %>%
+  group_by(EDAT_GR, GENERE) %>%
+  summarise(
+    Total = n(),
+    Vots_Extrema_Dreta = sum(VOT_ALIANÇA_VOX == 1),
+    Percentatge = 100 * Vots_Extrema_Dreta / Total,
+    .groups = "drop"
+  )
+
+df_wide <- df_summary %>%
+  select(EDAT_GR, GENERE, Percentatge) %>%
+  pivot_wider(names_from = GENERE, values_from = Percentatge, names_prefix = "Percentatge_Extrema_Dreta_")
+
+df_total <- DF_Resultats_Enquesta_Net %>%
+  group_by(EDAT_GR) %>%
+  summarise(
+    Total = n(),
+    Vots_Extrema_Dreta = sum(VOT_ALIANÇA_VOX == 1),
+    Percentatge_Extrema_Dreta_Total = 100 * Vots_Extrema_Dreta / Total,
+    .groups = "drop"
+  )
+
+DF_Flourish_5 <- df_total %>%
+  left_join(df_wide, by = "EDAT_GR") %>%
+  select(EDAT_GR, Total, Percentatge_Extrema_Dreta_Total, Percentatge_Extrema_Dreta_Home, Percentatge_Extrema_Dreta_Dona)
+```
+
+```{r}
+write.csv2(DF_Flourish_5, file = "DF_Flourish_5.csv", row.names = FALSE)
+```
